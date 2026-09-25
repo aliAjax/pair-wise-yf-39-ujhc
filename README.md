@@ -33,9 +33,39 @@ python3 app.py --db ./data.db --port 8305
 - `POST /api/<kind>`：创建对象；请求体为JSON。
 - `GET /api/entities/<id>`：读取对象当前版本。
 - `POST /api/entities/<id>/actions`：提交`{"action":"动作名","data":{...},"expected_version":数字}`。
-- `GET /api/audit`：读取审计记录。
+- `POST /api/sync/batches`：离线同步批次（见下节）。
+- `GET /api/audit`：读取审计记录，可用`?entity_id=`过滤。
 
 请求身份通过`X-User-Id`和`X-Role`请求头传入。创建和动作的可执行角色由规则引擎控制。
+
+## 离线同步批次
+
+野外队回驻点后，把同一观察事件拆出的多条离线记录一次上报：
+
+```json
+POST /api/sync/batches
+{
+  "batch_id": "B-100",
+  "records": [
+    {
+      "offline_id": "off-1",
+      "kind": "observation",
+      "entity_id": "可选，服务端记录id",
+      "baseline_version": 1,
+      "data": {"location": "North Ridge", "remark": "saw tracks"},
+      "field_timestamps": {"location": "2026-04-02T09:00:00+00:00"}
+    }
+  ]
+}
+```
+
+- 每条记录带`offline_id`（离线编号）、`field_timestamps`（字段时间，标记客户端离线改过的字段）和`baseline_version`（基线版本）。
+- 记录定位：优先`entity_id`，否则按自然键匹配（observation用`event_id`，sample用`sample_code`），都没有则新建；单笔补传时的"重复事件"因此自动转为合并。
+- 字段级合并：只有客户端改过的字段（以字段时间为准）参与合并；基线版本之后服务端也改了同一字段时，保留服务端内容，客户端值列入该条的`conflicts`冲突清单。
+- `batch_id`是幂等键：批次重传原样返回首次结果（`replayed: true`），不会重复写入。
+- 单条记录校验失败只标记该条为`failed`，不影响批次内其他记录写入。
+- 响应按`offline_id`给出每条最终记录、冲突清单和批次审计入口（`batch:<batch_id>`，可用`GET /api/audit?entity_id=`读取）。
+- 原单笔登记`POST /api/<kind>`不受影响，照常可用。
 
 ## 测试
 

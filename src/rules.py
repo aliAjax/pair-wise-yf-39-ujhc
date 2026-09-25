@@ -63,6 +63,8 @@ class RuleEngine:
     ACTION_REQUIRED = {('observation', 'submit'): ('location', 'observed_at'), ('observation', 'reject'): ('reason',), ('observation', 'link_sample'): ('sample_id',), ('sample', 'send_lab'): ('lab_id',), ('sample', 'lab_result'): ('result', 'result_at'), ('sample', 'retest'): ('reason',), ('sample', 'close'): ('outcome',), ('cluster', 'confirm_cluster'): ('observation_ids', 'centroid'), ('cluster', 'dismiss'): ('reason',)}
     CREATE_ROLES = {'observation': ('admin', 'field'), 'sample': ('admin', 'field'), 'cluster': ('admin', 'epidemiologist')}
     ROLE_ACTIONS = {'submit': ('admin', 'field'), 'reject': ('admin', 'epidemiologist'), 'link_sample': ('admin', 'field'), 'send_lab': ('admin', 'field'), 'lab_result': ('admin', 'lab'), 'retest': ('admin', 'lab'), 'close': ('admin', 'epidemiologist'), 'confirm_cluster': ('admin', 'epidemiologist'), 'dismiss': ('admin', 'epidemiologist')}
+    SYNC_ROLES = {'observation': ('admin', 'field'), 'sample': ('admin', 'field', 'lab'), 'cluster': ('admin', 'epidemiologist')}
+    SYNC_MATCH_FIELDS = {'observation': 'event_id', 'sample': 'sample_code'}
 
     def normalize_kind(self, kind):
         return self.ALIASES.get(kind, kind)
@@ -117,6 +119,17 @@ class RuleEngine:
         if extra:
             patch.update(extra)
         return next_status, patch
+
+    def sync_match_field(self, kind):
+        return self.SYNC_MATCH_FIELDS.get(self.normalize_kind(kind))
+
+    def validate_sync_merge(self, actor, kind, merged):
+        kind = self.normalize_kind(kind)
+        if kind not in self.INITIAL_STATUS:
+            raise ValidationError("unknown kind: " + str(kind))
+        self._ensure_role(actor, self.SYNC_ROLES.get(kind, ("admin",)))
+        if kind == "sample" and merged.get("result") is not None:
+            _validate_lab_result(actor, None, merged, None)
 
 
 def _find_one(lookup, kind, field, value):

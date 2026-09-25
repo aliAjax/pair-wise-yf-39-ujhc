@@ -54,6 +54,13 @@ class SQLiteRepository:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY(actor_id, idem_key)
                 );
+                CREATE TABLE IF NOT EXISTS sync_batches (
+                    actor_id TEXT NOT NULL,
+                    batch_id TEXT NOT NULL,
+                    response TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(actor_id, batch_id)
+                );
             """)
 
     @staticmethod
@@ -194,6 +201,23 @@ class SQLiteRepository:
                 "INSERT OR REPLACE INTO idempotency(actor_id, idem_key, entity_id, created_at) "
                 "VALUES (?, ?, ?, ?)",
                 (actor_id, idem_key, entity_id, utcnow()),
+            )
+
+    def get_sync_batch(self, actor_id, batch_id):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT response FROM sync_batches WHERE actor_id = ? AND batch_id = ?",
+                (actor_id, batch_id),
+            ).fetchone()
+        return json.loads(row["response"]) if row else None
+
+    def save_sync_batch(self, actor_id, batch_id, response):
+        payload = json.dumps(response, ensure_ascii=False, sort_keys=True)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO sync_batches(actor_id, batch_id, response, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (actor_id, batch_id, payload, utcnow()),
             )
 
     def ping(self):
