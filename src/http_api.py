@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .domain import (
     ConflictError,
@@ -84,7 +84,13 @@ def create_handler(service, rules, static_dir):
                     with open(index, "r", encoding="utf-8") as handle:
                         return self._send_html(200, handle.read())
                 if parts == ["api", "audit"]:
-                    return self._send(200, {"items": service.audit_log()})
+                    query = parse_qs(parsed.query)
+                    entity_id = query.get("entity_id", [None])[0]
+                    return self._send(200, {"items": service.audit_log(entity_id=entity_id)})
+                if len(parts) == 4 and parts[:3] == ["api", "sync", "batches"]:
+                    return self._send(
+                        200, service.sync_batch_status(self._actor(), unquote(parts[3]))
+                    )
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     return self._send(200, service.get(parts[2]))
                 if len(parts) >= 2 and parts[0] == "api":
@@ -107,6 +113,8 @@ def create_handler(service, rules, static_dir):
                 parsed = urlparse(self.path)
                 parts = [part for part in parsed.path.split("/") if part]
                 actor = self._actor()
+                if parts == ["api", "sync", "batches"]:
+                    return self._send(200, service.sync_batch(actor, self._body()))
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     body = self._body()
                     action = body.pop("action", None)

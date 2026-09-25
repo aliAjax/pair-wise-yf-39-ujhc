@@ -33,9 +33,53 @@ python3 app.py --db ./data.db --port 8305
 - `POST /api/<kind>`：创建对象；请求体为JSON。
 - `GET /api/entities/<id>`：读取对象当前版本。
 - `POST /api/entities/<id>/actions`：提交`{"action":"动作名","data":{...},"expected_version":数字}`。
-- `GET /api/audit`：读取审计记录。
+- `POST /api/sync/batches`：提交离线同步批次（见下节）。
+- `GET /api/sync/batches/<batch_id>`：查询批次首次处理结果与批次审计。
+- `GET /api/audit`：读取审计记录，可用`?entity_id=`过滤。
 
 请求身份通过`X-User-Id`和`X-Role`请求头传入。创建和动作的可执行角色由规则引擎控制。
+
+## 离线同步批次
+
+野外队回驻点后，把同一事件拆出的多条离线记录作为一个批次上传：
+
+```json
+POST /api/sync/batches
+{
+  "batch_id": "team-a-2026-04-05",
+  "records": [
+    {
+      "offline_id": "OFF-1",
+      "kind": "observation",
+      "entity_id": "可选；缺省时按 event_id/sample_code 匹配已有记录",
+      "base_version": 1,
+      "field_timestamps": {"location": "2026-04-02T08:00:00"},
+      "data": {"event_id": "E-1", "location": "South"}
+    },
+    {
+      "offline_id": "OFF-2",
+      "kind": "sample",
+      "entity_id": "...",
+      "base_version": 2,
+      "action": "lab_result",
+      "data": {"result": "positive", "result_at": "2026-04-05"}
+    }
+  ]
+}
+```
+
+每条记录必须带`offline_id`（离线编号）、`base_version`（客户端基线版本，无基线传`0`）；`field_timestamps`（字段时间）可选但建议提供。记录按三种方式处理：
+
+- 找不到目标实体：按原单笔规则创建（`created`）。
+- 带`action`：基线版本等于当前版本时走原状态机执行（`applied`），否则保留服务端并记入冲突清单（`conflict`）。
+- 否则做字段级合并：不同字段直接合入（`merged`）；同一字段在基线版本之后服务端也改过时，保留服务端内容，客户端值列入冲突清单（`conflict`）；批次内多条记录写同一字段时，字段时间较新的生效（`batch_kept`为被保留方）。
+
+语义约定：
+
+- 批次按`batch_id`幂等：重传沿用首次处理结果，不产生新的写入。
+- 单条记录校验失败只标记该条为`error`，不影响批次内其他记录写入。
+- 响应中`records`给出每个离线编号的最终记录，`results`给出每条状态与冲突清单，`audit`给出批次审计入口（审计实体`sync-batch:<batch_id>`）。
+- 原单笔登记接口（`POST /api/<kind>`、`POST /api/entities/<id>/actions`）行为不变。
 
 ## 测试
 
@@ -45,4 +89,4 @@ python3 -m unittest discover -s tests -v
 
 ## 局限
 
-离线同步使用批次和幂等键演示，不包含真实野外通信协议、地图底图或完整空间索引。
+离线同步使用批次和幂等键演示，不包含真实野外通信协议、地图底图或完整空间索引。批次幂等按`(操作者, batch_id)`存储首次结果，未对并发提交同一批次做严格互斥。
